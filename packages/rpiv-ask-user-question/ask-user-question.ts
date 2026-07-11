@@ -273,31 +273,19 @@ export function buildItemsForQuestion(question: QuestionData): WrappingSelectIte
 
 export const DEFAULT_PROMPT_SNIPPET = `Ask the user up to ${MAX_QUESTIONS} structured questions (${MIN_OPTIONS}-${MAX_OPTIONS} options each) when requirements are ambiguous`;
 export const DEFAULT_PROMPT_GUIDELINES: string[] = [
-	`Use ask_user_question whenever the user's request is underspecified and you cannot proceed without concrete decisions — you can ask up to ${MAX_QUESTIONS} questions per invocation.`,
-	`Each question MUST have ${MIN_OPTIONS}-${MAX_OPTIONS} options. Every option requires a concise label (1-5 words) and a description explaining what the choice means or its trade-offs. The user can additionally type a custom answer via the automatically appended "Type something." row on every question, or press Esc to abandon the questionnaire. Do NOT author "Other" or "Type something." labels yourself — reserved labels are rejected at runtime.`,
-	`Set multiSelect: true when multiple answers are valid. Provide an options[].preview markdown string when an option benefits from richer side-by-side context (mockups, code snippets, diagrams, configs) — single-select only. The "Type something." row is appended to every question; in preview mode it expands to the full pane width while typing so the custom answer is not cramped into the narrow options column. If you recommend a specific option, make that the first option and append "(Recommended)" to its label.`,
-	"Do not stack multiple ask_user_question calls back-to-back — group all clarifying questions into one invocation.",
+	`Reach for ask_user_question when the user's request is underspecified and you cannot proceed without concrete decisions.`,
+	`Ask everything in one call (up to ${MAX_QUESTIONS}); don't stack ask_user_question calls back-to-back.`,
+	`Users answer through the automatically appended "Type something." row on every question, or press Esc to abandon the questionnaire — never author your own custom-answer option.`,
+	`Use multiSelect when several answers can be valid; typed custom text checks its own row and is returned alongside the checked options. Add an option preview (single-select only) when a mockup, snippet, diagram, or config would make a choice clearer.`,
 ];
 
-export const DEFAULT_TOOL_DESCRIPTION = `Ask the user one or more structured questions during execution. Use when you need to:
-1. Gather user preferences or requirements
-2. Clarify ambiguous instructions
-3. Get decisions on implementation choices as you work
-4. Offer choices to the user about what direction to take
+export const DEFAULT_TOOL_DESCRIPTION = `Ask the user one or more structured questions during execution — preferences, requirements, ambiguities, implementation or direction decisions.
 
-Usage notes:
-- Users can type a custom answer via the automatically appended "Type something." row on every question or press Esc to abandon the questionnaire. Do NOT author "Other" or "Type something." labels yourself — reserved labels are rejected at runtime.
-- Use multiSelect: true when multiple answers are valid. The "Type something." row is available on every question, including when options carry a \`preview\`; in preview mode it expands to the full pane width while typing so the custom answer is not cramped into the narrow options column.
-- If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label.
+Each question takes ${MIN_OPTIONS}-${MAX_OPTIONS} options; each needs a label (1-5 words) and a description of the choice or its trade-offs. Users answer through the automatically appended "Type something." row on every question, or press Esc to abandon the questionnaire — never author "Other" / "Type something." options yourself, since reserved labels are rejected at runtime.
 
-Preview feature:
-Use the optional \`preview\` field on options when presenting concrete artifacts that users need to visually compare:
-- ASCII mockups of UI layouts or components
-- Code snippets showing different implementations
-- Diagram variations
-- Configuration examples
-
-Preview content is rendered as markdown in a monospace box. Multi-line text with newlines is supported. When any option has a preview, the UI switches to a side-by-side layout with a vertical option list on the left and preview on the right. Do not use previews for simple preference questions where labels and descriptions suffice. Note: previews are only supported for single-select questions (not multiSelect).`;
+- multiSelect: true allows selecting multiple options; the "Type something." row is available there too — typing into it checks that row and its text comes back alongside the checked options, not instead of them.
+- To recommend an option, put it first and append "(Recommended)" to its label.
+- \`preview\` (single-select only): optional per-option markdown, rendered in a monospace box (multi-line ok), for artifacts the user must compare — ASCII mockups, code snippets, diagram variations, configs. Any option setting it switches the UI to a side-by-side layout (options left, preview right); the "Type something." row stays available there and expands to full width while typing. Skip previews when labels and descriptions suffice.`;
 
 export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
 	const guidance = validateGuidanceFields(loadConfig().guidance);
