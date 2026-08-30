@@ -44,6 +44,10 @@ jobs:
       PKG_DIR: packages/rpiv-ask-user-question
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: the release guard needs merge-base against the
+          # default branch, which a shallow clone cannot answer.
+          fetch-depth: 0
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -104,6 +108,16 @@ jobs:
             exit 1
           fi
           echo "release commit matches ${TAG}"
+
+          # A tag can be created on any commit, including one never merged. Require the
+          # release to come from the default branch. Checking that the tag points at
+          # GITHUB_SHA is tautological on a tag push, since GITHUB_SHA IS the tagged
+          # commit, so it proves nothing about which branch that commit is on.
+          git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::commit $GITHUB_SHA is not on origin/main; refusing to publish"
+            exit 1
+          fi
 
       # Proves the files array actually covers what the extension imports, before the
       # artifact is immutable on the registry. A missing module here is unfixable
