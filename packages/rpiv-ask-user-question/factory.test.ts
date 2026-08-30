@@ -659,6 +659,34 @@ describe("ask_user_question — multi-question tab cycling flow", () => {
 		expect(onOther.some((l) => l.includes("Hello") && l.includes(CURSOR_MARKER))).toBe(true);
 	});
 
+	// Issue #197's stated repro: type into "Type something.", move focus UP to an
+	// authored option, then back DOWN. `navHandler` snapshots the live buffer into
+	// `customDraftsByTab` on the way out and re-seeds it on the way in, so the draft
+	// must survive without any Enter. Tab cannot leave the row at all while
+	// inputMode is active (routeInputMode swallows it), so this nav round trip is
+	// the only way to leave and return.
+	it("UP then DOWN back onto `Type something.` keeps an unconfirmed draft", async () => {
+		const tool = register();
+		const renderedOnOtherRow: string[][] = [];
+		const { custom } = driveCustom((c, done) => {
+			c.handleInput(KEY.DOWN); // → B
+			c.handleInput(KEY.DOWN); // → Type something. (kind:'other', inputMode)
+			c.handleInput("d");
+			c.handleInput("r");
+			c.handleInput("a");
+			c.handleInput("f");
+			c.handleInput("t");
+			c.handleInput(KEY.UP); // → back to an authored option, no Enter
+			c.handleInput(KEY.DOWN); // → Type something. again
+			renderedOnOtherRow.push(c.render(120));
+			done({ answers: [], cancelled: true });
+		});
+		const ctx = { hasUI: true, ui: { custom } } as never;
+		await tool.execute?.("tc", twoParams as never, undefined as never, undefined as never, ctx);
+		const onOther = renderedOnOtherRow[0]!;
+		expect(onOther.some((l) => l.includes("draft") && l.includes(CURSOR_MARKER))).toBe(true);
+	});
+
 	// Multi-select keeps its existing `[✔]` rendering — the new single-select marker must
 	// NOT also render on multi-select tabs.
 	it("Tab back to a multi-select tab keeps `[✔]` and does NOT add a trailing ` ✔`", async () => {
@@ -836,6 +864,25 @@ describe("ask_user_question — notes pre-answer (Slice 5 notes UX)", () => {
 		expect(r?.details.cancelled).toBe(false);
 		expect(r?.details.answers[0]).toMatchObject({ answer: "Centered", kind: "option" });
 		expect(r?.details.answers[0].notes).toBe("hello");
+	});
+
+	// A committed note used to vanish the moment the editor closed: the question tab
+	// rendered nothing, and a single-question run has no Submit tab to review it on.
+	it("keeps a committed note visible on the question tab as `Note for this answer:`", async () => {
+		const tool = register();
+		const renderedAfterNote: string[][] = [];
+		const { custom } = driveCustom((c, done) => {
+			c.handleInput("n"); // enter notes mode
+			c.handleInput("h");
+			c.handleInput("i");
+			c.handleInput(KEY.ESC); // exit notes (commits to notesByTab)
+			renderedAfterNote.push(c.render(120));
+			done({ answers: [], cancelled: true });
+		});
+		const ctx = { hasUI: true, ui: { custom } } as never;
+		await tool.execute?.("tc", threeOptionParams as never, undefined as never, undefined as never, ctx);
+		const lines = renderedAfterNote[0]!;
+		expect(lines.some((l) => l.includes("Note for this answer:") && l.includes("hi"))).toBe(true);
 	});
 
 	it("'n' opens the notes editor on a no-preview option and lands the note on the answer (universal `n` gate)", async () => {

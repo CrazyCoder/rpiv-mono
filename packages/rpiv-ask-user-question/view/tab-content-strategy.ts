@@ -28,6 +28,7 @@ const NOTES_HEADER = "Notes:";
 const GLOBAL_NOTES_HEADER = "Global note:";
 const REVIEW_GLOBAL_HINT = "n to add a note";
 const REVIEW_NOTE_LABEL = "Note";
+const ANSWER_NOTE_LABEL = "Note for this answer";
 
 /**
  * Single-row, width-clipped chrome cell. The footer row count is invariant
@@ -128,7 +129,21 @@ export class QuestionTabStrategy implements TabContentStrategy {
 	}
 
 	midRows(state: DialogState): Component[] {
-		if (!state.notesVisible) return [];
+		if (!state.notesVisible) {
+			// Once the editor closes the note is otherwise invisible, and a single-question
+			// run has no Submit tab to review it on, so it would be lost from view entirely
+			// (issue #197). midRows is appended rather than counted in the chrome's
+			// `bodyHeight + footerRowCount` math and already varies between 0 and 3 rows,
+			// so adding this row is height-safe; OneLineClippedText keeps a long note from
+			// wrapping into extra rows.
+			const note = state.notesByTab.get(state.currentTab);
+			if (!note || note.length === 0) return [];
+			const label = `${t("review.answer_note_label", ANSWER_NOTE_LABEL)}:`;
+			return [
+				new OneLineClippedText(`${this.config.theme.fg("muted", label)} ${this.config.theme.fg("text", note)}`, 1),
+				new Spacer(1),
+			];
+		}
 		return [
 			new Text(this.config.theme.fg("muted", t("notes.header", NOTES_HEADER)), 1, 0),
 			this.config.notesInput,
@@ -192,8 +207,17 @@ export class SubmitTabStrategy implements TabContentStrategy {
 			c.addChild(
 				new Text(`   ${this.config.theme.fg("muted", "→")} ${this.config.theme.fg("text", answerText)}`, 1, 0),
 			);
+			// Labelled and `muted` rather than a `dim` "notes:" run-on, so a saved
+			// per-answer note reads as its own reviewable entry (issue #197).
 			if (a.notes && a.notes.length > 0) {
-				c.addChild(new Text(this.config.theme.fg("dim", `     notes: ${a.notes}`), 1, 0));
+				const noteLabel = `${t("review.answer_note_label", ANSWER_NOTE_LABEL)}:`;
+				c.addChild(
+					new Text(
+						`     ${this.config.theme.fg("muted", noteLabel)} ${this.config.theme.fg("text", a.notes)}`,
+						1,
+						0,
+					),
+				);
 			}
 		}
 		// Committed global note (#182) as a review entry — pressing `n` gets visible
