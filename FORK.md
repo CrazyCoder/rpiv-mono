@@ -80,3 +80,54 @@ reapply.
 Three failures are pre-existing on Windows and also fail on a pristine
 `origin/main` checkout: one in `ship-manifest.test.ts` and two in
 `state/external-editor.test.ts`, all from path and shell assumptions.
+
+## Releasing
+
+The extension publishes to npm as `@crazycoder/rpiv-ask-user-question`, so
+installing it does not mean cloning this monorepo. `.github/workflows/publish-fork.yml`
+runs on a pushed `v*` tag.
+
+### One-time bootstrap
+
+Trusted publishing needs the package to already exist, because a trusted
+publisher is attached from the package settings page and npm has no
+pending-publisher concept. So the first version goes up by hand, once:
+
+```
+npm login
+npm publish -w @crazycoder/rpiv-ask-user-question --access public
+```
+
+Then on npmjs.com, open the package settings, and under Trusted Publisher
+select GitHub Actions with repository `CrazyCoder/rpiv-mono` and workflow
+`publish-fork.yml`. After that no credential is stored anywhere, and CI
+publishes every later version with provenance.
+
+That first manual publish carries no provenance, since provenance is minted
+from a CI OIDC token. Only 2.8.1 is affected.
+
+### Every release after that
+
+```
+npm version patch -w @crazycoder/rpiv-ask-user-question --no-git-tag-version
+npm install --package-lock-only
+git commit -am "chore(release): <version>"
+git tag v<version> && git push fork main --follow-tags
+```
+
+The lock must be regenerated in the same commit. `npm ci` refuses to run when
+the lock and the manifest disagree, and it is the workflow's first step.
+
+The workflow refuses to publish unless tag `v<version>` points at the exact
+commit being built, on every publishing path rather than only on tag pushes.
+A manual dispatch defaults to a dry run, which skips that check so the pipeline
+can be rehearsed from a branch without burning a version number.
+
+`scripts/verify-fork-tarball.mjs` packs the artifact and walks its import graph
+before anything is published. The package lists its shipped files by hand in
+`files`, so a new module is one forgotten line away from being missing from the
+tarball, and that is unfixable after publish except by burning a version.
+
+npm is pinned to the 11.x line in CI. npm 12 fails provenance publishing with
+`Cannot find module 'sigstore'`.
+

@@ -4,11 +4,13 @@
 # workspace under its own scope from scripts/release.mjs; this publishes exactly one
 # package so a Pi user can install it without cloning a 300 MB monorepo.
 #
-# Auth today is NPM_TOKEN, because npm cannot perform a package's FIRST publish over
-# OIDC: a trusted publisher is attached from the package settings page, which requires
-# the package to already exist. Once 2.8.1 is on the registry, attach the trusted
-# publisher and delete the NODE_AUTH_TOKEN line below. Nothing else has to change,
-# since `id-token: write` and `--provenance` are already in place.
+# Auth is OIDC trusted publishing: no token is stored anywhere, and provenance is
+# attached automatically. This requires a one-time bootstrap, because npm cannot
+# publish a package's FIRST version over OIDC. A trusted publisher is attached from
+# the package settings page, which requires the package to already exist, and npm has
+# no pending-publisher concept (npm/cli#8544 is still open). So 2.8.1 goes up once by
+# hand, the trusted publisher is attached, and every release after that runs here
+# with no credential. See FORK.md for the bootstrap steps.
 name: Publish fork package
 
 on:
@@ -109,12 +111,13 @@ jobs:
       - name: Verify the tarball is loadable
         run: node scripts/verify-fork-tarball.mjs
 
+      # No NODE_AUTH_TOKEN: the OIDC token minted by `id-token: write` authenticates
+      # this run, and trusted publishing attaches provenance on its own, so passing
+      # --provenance explicitly is unnecessary. Fails cleanly, publishing nothing, if
+      # the trusted publisher has not been attached yet.
       - name: Publish
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)
-        run: npm publish -w "$PKG" --provenance --access public
-        env:
-          # Delete this line once a trusted publisher is attached on npmjs.com.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish -w "$PKG" --access public
 
       # Only on a tag push: a dispatched re-run of an already-released tag would
       # otherwise fail here on an existing release.
