@@ -120,7 +120,7 @@ The package publishes one event on Pi's event bus, emitted after validation pass
 before the dialog is shown. Import it from the `/events` subpath:
 
 ```ts
-import { ASK_USER_PROMPT_EVENT, type AskUserPromptEventPayload } from "@juicesharp/rpiv-ask-user-question/events";
+import { ASK_USER_PROMPT_EVENT, type AskUserPromptEventPayload } from "@jetserge/rpiv-ask-user-question/events";
 
 pi.events.on(ASK_USER_PROMPT_EVENT, (payload: AskUserPromptEventPayload) => {
   // payload.questions[].{ question, header, multiSelect, options[] }
