@@ -8,19 +8,25 @@ export const ENVELOPE_SUFFIX = "You can now continue with the user's answers in 
 /**
  * Map a `QuestionnaireResult` (or null/cancelled) to the LLM-facing tool envelope.
  * Pure of `(result, params)`; cancelled and "no segments" both fall to `DECLINE_MESSAGE`
- * so the model sees a single canonical "didn't answer" signal regardless of why.
+ * so the model sees a single canonical "didn't answer" signal regardless of why. A
+ * cancel carrying a global note appends it to that signal rather than swallowing it.
  * "No segments" means no answers AND no global note — the `global note:` segment is
  * pushed before the zero-segments check, so a note-bearing submit with zero answers
  * still yields the answered envelope.
  */
 export function buildQuestionnaireResponse(result: QuestionnaireResult | null | undefined, params: QuestionParams) {
 	if (!result || result.cancelled) {
-		// Decline text stays canonical even when a global note rides the cancelled result;
-		// the note survives in `details` (like partial `answers`) for replay consumers.
-		return buildToolResult(DECLINE_MESSAGE, {
+		// A declining user who left a global note is pushing back on the questions
+		// themselves — the closest thing this dialog has to a "reply to the caller"
+		// affordance. `details` never reaches the model, so echoing the note into the
+		// text is what actually delivers it; leaving it in `details` alone drops the
+		// one thing the user chose to say. `DECLINE_MESSAGE` stays the prefix, so a
+		// consumer testing for the canonical decline signal is unaffected.
+		const declineNote = result?.globalNote && result.globalNote.length > 0 ? result.globalNote : undefined;
+		return buildToolResult(declineNote ? `${DECLINE_MESSAGE}. global note: ${declineNote}.` : DECLINE_MESSAGE, {
 			answers: result?.answers ?? [],
 			cancelled: true,
-			...(result?.globalNote && result.globalNote.length > 0 ? { globalNote: result.globalNote } : {}),
+			...(declineNote ? { globalNote: declineNote } : {}),
 		});
 	}
 	const segments: string[] = [];

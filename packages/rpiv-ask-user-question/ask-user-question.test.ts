@@ -410,17 +410,29 @@ describe("buildQuestionnaireResponse — global note", () => {
 		expect(r.details).toBe(result);
 	});
 
-	it("cancelled + note: DECLINE_MESSAGE text, answers forwarded AND globalNote preserved in details", () => {
+	// A note left on the way out is the user pushing back on the questions. `details`
+	// never reaches the model, so the note has to ride in the text or it is lost.
+	it("cancelled + note: note echoed after DECLINE_MESSAGE, answers and note kept in details", () => {
 		const result: QuestionnaireResult = {
 			cancelled: true,
 			answers: [{ questionIndex: 0, question: "Pick?", kind: "option", answer: "A" }],
-			globalNote: "kept for replay",
+			globalNote: "these questions assume a REST backend",
 		};
 		const r = buildQuestionnaireResponse(result, params);
-		expect(r.content[0].text).toBe("User declined to answer questions");
+		expect(r.content[0].text).toBe(
+			"User declined to answer questions. global note: these questions assume a REST backend.",
+		);
+		expect(r.content[0].text.startsWith("User declined to answer questions")).toBe(true);
 		expect(r.details.answers).toEqual(result.answers);
 		expect(r.details.cancelled).toBe(true);
-		expect(r.details.globalNote).toBe("kept for replay");
+		expect(r.details.globalNote).toBe("these questions assume a REST backend");
+	});
+
+	it("cancelled without a note: text stays exactly DECLINE_MESSAGE", () => {
+		const result: QuestionnaireResult = { cancelled: true, answers: [] };
+		const r = buildQuestionnaireResponse(result, params);
+		expect(r.content[0].text).toBe("User declined to answer questions");
+		expect("globalNote" in r.details).toBe(false);
 	});
 
 	it("zero answers + no note still declines (fresh details literal carries no globalNote key)", () => {
