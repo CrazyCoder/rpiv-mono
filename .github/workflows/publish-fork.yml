@@ -1,0 +1,144 @@
+# Publishes the fork's patched extension to npm as @crazycoder/rpiv-ask-user-question.
+#
+# Fork-only workflow: it must never be sent upstream. Upstream publishes the whole
+# workspace under its own scope from scripts/release.mjs; this publishes exactly one
+# package so a Pi user can install it without cloning a 300 MB monorepo.
+#
+# Auth today is NPM_TOKEN, because npm cannot perform a package's FIRST publish over
+# OIDC: a trusted publisher is attached from the package settings page, which requires
+# the package to already exist. Once 2.8.1 is on the registry, attach the trusted
+# publisher and delete the NODE_AUTH_TOKEN line below. Nothing else has to change,
+# since `id-token: write` and `--provenance` are already in place.
+name: Publish fork package
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run every gate and pack the tarball, but do not publish"
+        type: boolean
+        default: true
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # This repo is itself a fork, and anyone forking it again inherits this workflow
+    # along with the tags. Without this guard their tag push would try to publish our
+    # package name from their checkout.
+    if: github.repository == 'CrazyCoder/rpiv-mono'
+    name: verify and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # cutting the GitHub release; read alone is enough to publish
+      id-token: write # provenance attestation, and OIDC auth once the token is dropped
+    env:
+      PKG: "@crazycoder/rpiv-ask-user-question"
+      PKG_DIR: packages/rpiv-ask-user-question
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          registry-url: "https://registry.npmjs.org"
+
+      # Node 22 ships npm 10, and provenance needs >= 11.5.1. Pinned to the 11.x line
+      # rather than @latest on purpose: npm 12 fails provenance publishing with
+      # "Cannot find module 'sigstore'", found the hard way on another package of
+      # ours. Revisit only once a 12.x release is confirmed to sign correctly.
+      - name: Upgrade npm
+        run: npm install -g npm@11 && npm --version
+
+      - run: npm ci
+
+      - name: Lint the published package
+        run: npx biome check --error-on-warnings "$PKG_DIR"
+
+      # The repo has no per-package tsconfig, and the root project currently reports
+      # pre-existing errors in sibling packages that this release does not ship.
+      # Gating on the whole project would block every publish for reasons unrelated
+      # to the artifact, so fail only on errors inside the package being published.
+      - name: Typecheck the published package
+        run: |
+          npx tsc --noEmit -p tsconfig.base.json > tsc.log 2>&1 || true
+          if grep -E "^${PKG_DIR}/.*error TS" tsc.log; then
+            echo "::error::type errors in the package being published"
+            exit 1
+          fi
+          echo "no type errors in ${PKG_DIR}"
+
+      - name: Test the published package
+        run: npx vitest run "$PKG_DIR"
+
+      # Publishing is irreversible: npm refuses to re-publish a version, so a manual
+      # run from an arbitrary branch would permanently burn a version number on a
+      # commit that no tag points at. Require on EVERY publishing path that the commit
+      # being built is exactly what tag v<package version> points to. Event-conditional
+      # guards are the hole here, so this is deliberately not conditioned on the event.
+      # A dry run skips it, so the pipeline can still be exercised from a branch.
+      - name: Guard the release commit
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)
+        run: |
+          VERSION="$(node -p "require('./${PKG_DIR}/package.json').version")"
+          TAG="v${VERSION}"
+          if [ "${{ github.event_name }}" = "push" ] && [ "$GITHUB_REF_NAME" != "$TAG" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package version $VERSION"
+            exit 1
+          fi
+          if ! git fetch --no-tags --depth=1 origin "+refs/tags/${TAG}:refs/tags/${TAG}" 2>/dev/null; then
+            echo "::error::no tag ${TAG} exists; create and push it before publishing ${VERSION}"
+            exit 1
+          fi
+          TAG_SHA="$(git rev-list -n1 "$TAG")"
+          if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
+            echo "::error::${TAG} points at ${TAG_SHA}, not the commit being built (${GITHUB_SHA})"
+            exit 1
+          fi
+          echo "release commit matches ${TAG}"
+
+      # Proves the files array actually covers what the extension imports, before the
+      # artifact is immutable on the registry. A missing module here is unfixable
+      # after publish except by burning a version number.
+      - name: Verify the tarball is loadable
+        run: node scripts/verify-fork-tarball.mjs
+
+      - name: Publish
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)
+        run: npm publish -w "$PKG" --provenance --access public
+        env:
+          # Delete this line once a trusted publisher is attached on npmjs.com.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Only on a tag push: a dispatched re-run of an already-released tag would
+      # otherwise fail here on an existing release.
+      - name: Create GitHub release
+        if: github.event_name == 'push'
+        run: >
+          gh release create "$GITHUB_REF_NAME"
+          --title "$GITHUB_REF_NAME"
+          --generate-notes
+          --notes "Published to npm: https://www.npmjs.com/package/${PKG}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Summary
+        run: |
+          VERSION="$(node -p "require('./${PKG_DIR}/package.json').version")"
+          {
+            echo "## ${PKG}@${VERSION}"
+            if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.dry_run }}" = "false" ]; then
+              echo "Published. Install with:"
+            else
+              echo "Dry run, nothing published. Install line would be:"
+            fi
+            echo '```json'
+            echo "\"extensions\": [\"${PKG}\"]"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

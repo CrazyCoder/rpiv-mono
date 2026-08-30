@@ -1,7 +1,7 @@
 {
-	"name": "@juicesharp/rpiv-ask-user-question",
-	"version": "2.8.0",
-	"description": "Pi extension. A structured questionnaire the model can put to you when it would otherwise guess, with typed options instead of free-form replies.",
+	"name": "@crazycoder/rpiv-ask-user-question",
+	"version": "2.8.1",
+	"description": "Pi extension. A structured questionnaire the model can put to you when it would otherwise guess, with typed options instead of free-form replies. Fork of @juicesharp/rpiv-ask-user-question with unreleased fixes applied.",
 	"keywords": [
 		"pi-package",
 		"pi-extension",
@@ -14,14 +14,17 @@
 	},
 	"license": "MIT",
 	"author": "juicesharp",
+	"contributors": [
+		"CrazyCoder (fork maintainer)"
+	],
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/juicesharp/rpiv-mono.git",
+		"url": "git+https://github.com/CrazyCoder/rpiv-mono.git",
 		"directory": "packages/rpiv-ask-user-question"
 	},
-	"homepage": "https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-ask-user-question#readme",
+	"homepage": "https://github.com/CrazyCoder/rpiv-mono/blob/main/FORK.md",
 	"bugs": {
-		"url": "https://github.com/juicesharp/rpiv-mono/issues"
+		"url": "https://github.com/CrazyCoder/rpiv-mono/issues"
 	},
 	"publishConfig": {
 		"access": "public"
@@ -79,7 +82,7 @@
 		"view/tab-content-strategy.ts"
 	],
 	"pi": {
-		"image": "https://raw.githubusercontent.com/juicesharp/rpiv-mono/main/packages/rpiv-ask-user-question/docs/cover.png",
+		"image": "https://raw.githubusercontent.com/CrazyCoder/rpiv-mono/main/packages/rpiv-ask-user-question/docs/cover.png",
 		"extensions": [
 			"./index.ts"
 		]
