@@ -158,6 +158,17 @@ export interface QuestionnaireResult {
 	 * byte-identical (`!("globalNote" in result)` holds).
 	 */
 	globalNote?: string;
+	/**
+	 * Notes authored on questions that were never answered. `answers[].notes` can
+	 * only carry a note when an answer exists, so without this a user who opens
+	 * `n`, explains why a question does not work, and leaves without confirming
+	 * loses that text entirely. A single-question run has no Submit tab, so this
+	 * is the only channel it has on the way out.
+	 *
+	 * Same conditional-spread contract as `globalNote`: the key is present only
+	 * when non-empty, so note-free results stay byte-identical.
+	 */
+	unansweredNotes?: Array<{ questionIndex: number; question: string; notes: string }>;
 	error?: QuestionnaireError;
 }
 

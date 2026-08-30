@@ -428,6 +428,17 @@ describe("buildQuestionnaireResponse — global note", () => {
 		expect(r.details.globalNote).toBe("these questions assume a REST backend");
 	});
 
+	it("cancelled + unanswered-question note: echoed so the feedback is not lost", () => {
+		const result: QuestionnaireResult = {
+			cancelled: true,
+			answers: [],
+			unansweredNotes: [{ questionIndex: 0, question: "Pick?", notes: "ambiguous" }],
+		};
+		const r = buildQuestionnaireResponse(result, params);
+		expect(r.content[0].text).toBe('User declined to answer questions. note on "Pick?": ambiguous.');
+		expect(r.details.unansweredNotes).toEqual(result.unansweredNotes);
+	});
+
 	it("cancelled without a note: text stays exactly DECLINE_MESSAGE", () => {
 		const result: QuestionnaireResult = { cancelled: true, answers: [] };
 		const r = buildQuestionnaireResponse(result, params);

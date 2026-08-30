@@ -1149,3 +1149,25 @@ describe("ask_user_question — multi-select notes end-to-end", () => {
 		expect(r?.details.answers[0].notes).toBe("hi");
 	});
 });
+
+// A single-question run has no Submit tab, so the per-question `n` note is the only
+// thing a user can say on the way out. It used to vanish: not an answer, so no
+// answers[].notes, and not the Submit-tab global note either.
+describe("ask_user_question — declining with feedback", () => {
+	it("single question: an n-note survives a cancel and reaches the model", async () => {
+		const tool = register();
+		const { custom } = driveCustom((c) => {
+			c.handleInput("n");
+			for (const ch of "reword this") c.handleInput(ch);
+			c.handleInput(KEY.ESC); // commit + leave notes
+			c.handleInput(KEY.ESC); // cancel the questionnaire
+		});
+		const ctx = { hasUI: true, ui: { custom } } as never;
+		const r = (await tool.execute?.("tc", threeOptionParams as never, undefined as never, undefined as never, ctx)) as
+			| ToolResult
+			| undefined;
+		expect(r?.content[0].text).toContain("User declined to answer questions");
+		expect(r?.content[0].text).toContain('note on "Pick one": reword this.');
+		expect(r?.details.unansweredNotes).toEqual([{ questionIndex: 0, question: "Pick one", notes: "reword this" }]);
+	});
+});

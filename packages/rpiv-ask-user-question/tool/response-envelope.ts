@@ -16,23 +16,38 @@ export const ENVELOPE_SUFFIX = "You can now continue with the user's answers in 
  */
 export function buildQuestionnaireResponse(result: QuestionnaireResult | null | undefined, params: QuestionParams) {
 	if (!result || result.cancelled) {
-		// A declining user who left a global note is pushing back on the questions
-		// themselves — the closest thing this dialog has to a "reply to the caller"
-		// affordance. `details` never reaches the model, so echoing the note into the
-		// text is what actually delivers it; leaving it in `details` alone drops the
-		// one thing the user chose to say. `DECLINE_MESSAGE` stays the prefix, so a
-		// consumer testing for the canonical decline signal is unaffected.
+		// A declining user who left a note is pushing back on the questions themselves
+		// — the closest thing this dialog has to a "reply to the caller" affordance.
+		// `details` never reaches the model, so echoing the note into the text is what
+		// actually delivers it; leaving it in `details` alone drops the one thing the
+		// user chose to say. Both channels are echoed: the Submit-tab global note, and
+		// notes left on questions that were never answered, which is the only channel
+		// a single-question run has (it has no Submit tab). `DECLINE_MESSAGE` stays
+		// the prefix, so a consumer testing for the canonical signal is unaffected.
 		const declineNote = result?.globalNote && result.globalNote.length > 0 ? result.globalNote : undefined;
-		return buildToolResult(declineNote ? `${DECLINE_MESSAGE}. global note: ${declineNote}.` : DECLINE_MESSAGE, {
+		const declineParts = [DECLINE_MESSAGE];
+		for (const n of result?.unansweredNotes ?? []) {
+			declineParts.push(`note on "${n.question}": ${n.notes}.`);
+		}
+		if (declineNote) declineParts.push(`global note: ${declineNote}.`);
+		const declineText =
+			declineParts.length > 1 ? `${DECLINE_MESSAGE}. ${declineParts.slice(1).join(" ")}` : DECLINE_MESSAGE;
+		return buildToolResult(declineText, {
 			answers: result?.answers ?? [],
 			cancelled: true,
 			...(declineNote ? { globalNote: declineNote } : {}),
+			...(result?.unansweredNotes ? { unansweredNotes: result.unansweredNotes } : {}),
 		});
 	}
 	const segments: string[] = [];
 	for (let i = 0; i < params.questions.length; i++) {
 		const a = result.answers.find((x) => x.questionIndex === i);
 		if (a) segments.push(buildAnswerSegment(a));
+	}
+	// A note on a question the user never answered would otherwise vanish: it is
+	// not an answer, so no `buildAnswerSegment` carries it.
+	for (const n of result.unansweredNotes ?? []) {
+		segments.push(`note on "${n.question}": ${n.notes}.`);
 	}
 	// Global note rides after the per-question segments: raw multiline echo (no
 	// reformatting), trailing period mirroring `buildAnswerSegment`'s shape.

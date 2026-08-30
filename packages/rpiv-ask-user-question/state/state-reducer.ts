@@ -146,6 +146,26 @@ function switchTabResult(state: QuestionnaireState, nextTab: number, ctx: ApplyC
 	};
 }
 
+/**
+ * Collect notes the user authored on questions they never answered.
+ *
+ * `answers[].notes` only carries a note when an answer exists, so a user who
+ * presses `n`, types why the question does not work, and then leaves without
+ * confirming would otherwise lose that text completely: it is neither an answer
+ * nor the Submit-tab global note. On a single-question run there is no Submit
+ * tab at all, which makes this the ONLY way to say anything on the way out.
+ */
+function unansweredNotesFor(state: QuestionnaireState, ctx: ApplyContext): QuestionnaireResult["unansweredNotes"] {
+	const out: NonNullable<QuestionnaireResult["unansweredNotes"]> = [];
+	for (let i = 0; i < ctx.questions.length; i++) {
+		if (state.answers.has(i)) continue;
+		const notes = state.notesByTab.get(i);
+		if (!notes || notes.length === 0) continue;
+		out.push({ questionIndex: i, question: ctx.questions[i]?.question ?? "", notes });
+	}
+	return out.length > 0 ? out : undefined;
+}
+
 function doneFor(state: QuestionnaireState, ctx: ApplyContext, cancelled: boolean): ApplyResult {
 	// Global note lift: the Submit-tab note lives at the `questions.length` pseudo-index
 	// in `notesByTab` — question tabs only occupy 0..questions.length-1, so this can never
@@ -153,10 +173,12 @@ function doneFor(state: QuestionnaireState, ctx: ApplyContext, cancelled: boolea
 	// reducer is truth; the envelope owns decline presentation), with cancel/submit/confirm
 	// sharing this single lift. Conditional spread keeps note-free results byte-identical.
 	const globalNote = state.notesByTab.get(ctx.questions.length);
+	const unansweredNotes = unansweredNotesFor(state, ctx);
 	const result: QuestionnaireResult = {
 		answers: orderedAnswers(state, ctx.questions),
 		cancelled,
 		...(globalNote && globalNote.length > 0 ? { globalNote } : {}),
+		...(unansweredNotes ? { unansweredNotes } : {}),
 	};
 	return { state, effects: [{ kind: "done", result }] };
 }
