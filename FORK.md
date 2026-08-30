@@ -83,7 +83,7 @@ Three failures are pre-existing on Windows and also fail on a pristine
 
 ## Releasing
 
-The extension publishes to npm as `@crazycoder/rpiv-ask-user-question`, so
+The extension publishes to npm as `@jetserge/rpiv-ask-user-question`, so
 installing it does not mean cloning this monorepo. `.github/workflows/publish-fork.yml`
 runs on a pushed `v*` tag.
 
@@ -95,7 +95,7 @@ pending-publisher concept. So the first version goes up by hand, once:
 
 ```
 npm login
-npm publish -w @crazycoder/rpiv-ask-user-question --access public
+npm publish -w @jetserge/rpiv-ask-user-question --access public
 ```
 
 Then on npmjs.com, open the package settings, and under Trusted Publisher
@@ -106,10 +106,15 @@ publishes every later version with provenance.
 That first manual publish carries no provenance, since provenance is minted
 from a CI OIDC token. Only 2.8.1 is affected.
 
+Pushing `v2.8.1` afterwards is safe. The workflow checks the registry first and
+skips publishing a version that is already there, so the tag still runs every
+gate and still cuts the GitHub release. The same check makes a re-run harmless
+when publishing succeeded but a later step failed.
+
 ### Every release after that
 
 ```
-npm version patch -w @crazycoder/rpiv-ask-user-question --no-git-tag-version
+npm version patch -w @jetserge/rpiv-ask-user-question --no-git-tag-version
 npm install --package-lock-only
 git commit -am "chore(release): <version>"
 git tag v<version> && git push fork main --follow-tags

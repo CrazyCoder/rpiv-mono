@@ -38,9 +38,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # cutting the GitHub release; read alone is enough to publish
-      id-token: write # provenance attestation, and OIDC auth once the token is dropped
+      id-token: write # OIDC auth for trusted publishing, and its provenance attestation
     env:
-      PKG: "@crazycoder/rpiv-ask-user-question"
+      PKG: "@jetserge/rpiv-ask-user-question"
       PKG_DIR: packages/rpiv-ask-user-question
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -111,12 +111,31 @@ jobs:
       - name: Verify the tarball is loadable
         run: node scripts/verify-fork-tarball.mjs
 
+      # The first version of a package cannot be published over OIDC, so 2.8.1 goes up
+      # by hand and its tag is pushed afterwards. That tag re-runs this workflow, and
+      # npm refuses to replace an existing version, which would fail the run before it
+      # could cut the release. Treat an already-published version as success instead:
+      # every gate above still ran, and the release step below still fires. This also
+      # makes a re-run safe when publishing succeeded but a later step failed.
+      - name: Check whether this version is already published
+        id: published
+        run: |
+          VERSION="$(node -p "require('./${PKG_DIR}/package.json').version")"
+          if npm view "${PKG}@${VERSION}" version > /dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${PKG}@${VERSION} is already on the registry, skipping publish"
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # No NODE_AUTH_TOKEN: the OIDC token minted by `id-token: write` authenticates
       # this run, and trusted publishing attaches provenance on its own, so passing
       # --provenance explicitly is unnecessary. Fails cleanly, publishing nothing, if
       # the trusted publisher has not been attached yet.
       - name: Publish
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)
+        if: >-
+          steps.published.outputs.already == 'false' &&
+          (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false))
         run: npm publish -w "$PKG" --access public
 
       # Only on a tag push: a dispatched re-run of an already-released tag would
@@ -132,11 +151,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Summary
+        if: always()
         run: |
           VERSION="$(node -p "require('./${PKG_DIR}/package.json').version")"
           {
             echo "## ${PKG}@${VERSION}"
-            if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.dry_run }}" = "false" ]; then
+            if [ "${{ steps.published.outputs.already }}" = "true" ]; then
+              echo "Already on the registry, so publishing was skipped. Every gate still ran."
+            elif [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.dry_run }}" = "false" ]; then
               echo "Published. Install with:"
             else
               echo "Dry run, nothing published. Install line would be:"
