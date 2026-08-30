@@ -67,18 +67,17 @@ jobs:
       - name: Lint the published package
         run: npx biome check --error-on-warnings "$PKG_DIR"
 
-      # The repo has no per-package tsconfig, and the root project currently reports
-      # pre-existing errors in sibling packages that this release does not ship.
-      # Gating on the whole project would block every publish for reasons unrelated
-      # to the artifact, so fail only on errors inside the package being published.
-      - name: Typecheck the published package
-        run: |
-          npx tsc --noEmit -p tsconfig.base.json > tsc.log 2>&1 || true
-          if grep -E "^${PKG_DIR}/.*error TS" tsc.log; then
-            echo "::error::type errors in the package being published"
-            exit 1
-          fi
-          echo "no type errors in ${PKG_DIR}"
+      # Typecheck the whole project and let tsc's exit code decide.
+      #
+      # This previously ran tsc with `|| true` and grepped for diagnostics under the
+      # package path, to tolerate sibling errors seen locally. That gate could not
+      # fail safely: a bad tsconfig, a crash, a missing dependency or a differently
+      # formatted path all produce no matching line, so the step passed while nothing
+      # had actually been checked. The premise was wrong too. CI runs `npm run check`
+      # clean on Node 22 and 24, so those sibling errors were local environment drift
+      # rather than a property of the repository.
+      - name: Typecheck
+        run: npx tsc --noEmit -p tsconfig.base.json
 
       - name: Test the published package
         run: npx vitest run "$PKG_DIR"
