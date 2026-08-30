@@ -68,8 +68,10 @@ git rebase origin/main
 git push --force-with-lease fork main
 ```
 
-Drop any commit whose PR has landed upstream. Keep the root manifest commit last
-so it stays easy to identify — it is fork-only and must never go upstream.
+Drop any commit whose PR has landed upstream. The two fork-only commits, the
+root manifest and the parity normalization, must never go upstream as they
+stand; keep them at the end of the stack so they are easy to identify and
+reapply.
 
 ## Tests
 
