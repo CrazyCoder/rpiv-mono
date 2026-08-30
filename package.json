@@ -6,6 +6,11 @@
 	"workspaces": [
 		"packages/*"
 	],
+	"pi": {
+		"extensions": [
+			"./packages/rpiv-ask-user-question/index.ts"
+		]
+	},
 	"scripts": {
 		"check": "biome check --write --error-on-warnings . && tsc --noEmit -p tsconfig.base.json",
 		"check:files": "biome check --write --error-on-warnings",
