@@ -307,7 +307,10 @@ describe("ask_user_question.execute — new runtime guards (CC parity)", () => {
 		expect(r?.content[0]).toMatchObject({ text: expect.stringContaining("Option labels must be unique") });
 	});
 
-	it("returns error: reserved_label when an option uses 'Other' / 'Type something.'", async () => {
+	// Parity: an authored "Other" is dropped, not rejected. The dialog appends its
+	// own custom row, so the authored copy is a duplicate affordance; failing the
+	// whole call over it would lose a turn for a cosmetic clash.
+	it("drops an authored 'Other' option instead of rejecting the call", async () => {
 		const tool = register();
 		const ctx = ctxWithCustom(null);
 		const params = {
@@ -320,11 +323,13 @@ describe("ask_user_question.execute — new runtime guards (CC parity)", () => {
 			],
 		};
 		const r = await tool.execute?.("tc", params as never, undefined as never, undefined as never, ctx as never);
-		expect(r?.details).toMatchObject({ cancelled: true, error: "reserved_label" });
-		expect(r?.content[0]).toMatchObject({ text: expect.stringContaining("reserved") });
+		expect(r?.details).not.toMatchObject({ error: "reserved_label" });
+		expect(r?.content[0]).not.toMatchObject({ text: expect.stringContaining("reserved") });
 	});
 
-	it("rejects 'Type something.' as a reserved label even on multiSelect questions (Decision 9)", async () => {
+	// The other two RESERVED_LABELS entries are this dialog's sentinels but ordinary
+	// labels elsewhere, so they survive as real options rather than being dropped.
+	it("keeps 'Type something.' and 'Next' as ordinary options", async () => {
 		const tool = register();
 		const ctx = ctxWithCustom(null);
 		const params = {
@@ -333,12 +338,12 @@ describe("ask_user_question.execute — new runtime guards (CC parity)", () => {
 					question: "Pick?",
 					header: "Pick",
 					multiSelect: true,
-					options: [{ label: "Type something." }, { label: "B" }],
+					options: [{ label: "Type something." }, { label: "Next" }],
 				},
 			],
 		};
 		const r = await tool.execute?.("tc", params as never, undefined as never, undefined as never, ctx as never);
-		expect(r?.details).toMatchObject({ cancelled: true, error: "reserved_label" });
+		expect(r?.details).not.toMatchObject({ error: "reserved_label" });
 	});
 });
 

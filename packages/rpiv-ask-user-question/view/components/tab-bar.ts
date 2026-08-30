@@ -1,5 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
+import { MAX_HEADER_LENGTH } from "../../tool/types.js";
 import type { StatefulView } from "../stateful-view.js";
 
 /**
@@ -36,7 +37,12 @@ export class TabBar implements StatefulView<TabBarProps> {
 
 		for (const tab of this.props.tabs) {
 			const box = tab.answered ? "■" : "□";
-			const rawSeg = ` ${box} ${tab.label} `;
+			// Per-chip clip. The line-level truncate below bounds the row as a whole,
+			// but one long header would consume it and push every later tab out of
+			// sight. The schema does not cap `header`, so this is what keeps an
+			// over-long one cosmetic instead of a lost turn.
+			const chipLabel = truncateToWidth(tab.label, MAX_HEADER_LENGTH, "…");
+			const rawSeg = ` ${box} ${chipLabel} `;
 			const styled = tab.active
 				? this.theme.bg("selectedBg", this.theme.fg("text", rawSeg))
 				: this.theme.fg(tab.answered ? "success" : "muted", rawSeg);

@@ -3,7 +3,7 @@ import { type Component, Container, type Editor, Spacer, Text, truncateToWidth }
 import { COLLAPSE_KEY_OFF, formatKeySpecForDisplay } from "../config.js";
 import { t } from "../state/i18n-bridge.js";
 import { formatAnswerScalar } from "../tool/format-answer.js";
-import type { QuestionData } from "../tool/types.js";
+import { MAX_HEADER_LENGTH, type QuestionData } from "../tool/types.js";
 import type { PreviewPane, PreviewPaneProps } from "./components/preview/preview-pane.js";
 import {
 	type DialogState,
@@ -107,7 +107,11 @@ export class QuestionTabStrategy implements TabContentStrategy {
 		const question = this.config.questions[state.currentTab];
 		// In multi-question mode the tab bar already shows the header; suppress the inline badge.
 		if (!this.config.isMulti && question?.header && question.header.length > 0) {
-			out.push(new Text(this.config.theme.bg("selectedBg", ` ${question.header} `), 1, 0));
+			// Clipped for the same reason as the TabBar chip: `header` carries no
+			// schema cap, so an over-long one must degrade to a truncated badge
+			// instead of wrapping this highlighted row across the dialog.
+			const badge = truncateToWidth(question.header, MAX_HEADER_LENGTH, "…");
+			out.push(new Text(this.config.theme.bg("selectedBg", ` ${badge} `), 1, 0));
 			out.push(new Spacer(1));
 		}
 		if (question) {

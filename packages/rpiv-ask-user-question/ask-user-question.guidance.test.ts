@@ -36,7 +36,7 @@ it("describes the all-question custom-answer contract in the registered tool", (
 	registerAskUserQuestionTool(pi);
 	const tool = captured.tools.get(TOOL_NAME)!;
 	expect(tool.description).toContain('automatically appended "Type something." row on every question');
-	expect(tool.description).toContain("reserved labels are rejected at runtime");
+	expect(tool.description).toContain('do not author your own "Other" option');
 });
 
 describe("registerAskUserQuestionTool — guidance overrides", () => {

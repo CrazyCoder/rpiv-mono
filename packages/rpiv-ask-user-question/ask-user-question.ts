@@ -18,6 +18,7 @@ import {
 import { type DialogUI, hasDialogUI, runRpcQuestionnaire } from "./rpc-fallback.js";
 import { displayLabel, t } from "./state/i18n-bridge.js";
 import { sentinelsToAppend } from "./state/row-intent.js";
+import { normalizeQuestionnaire } from "./tool/normalize-questionnaire.js";
 import { buildQuestionnaireResponse, buildToolResult } from "./tool/response-envelope.js";
 import {
 	MAX_OPTIONS,
@@ -281,7 +282,7 @@ export const DEFAULT_PROMPT_GUIDELINES: string[] = [
 
 export const DEFAULT_TOOL_DESCRIPTION = `Ask the user one or more structured questions during execution — preferences, requirements, ambiguities, implementation or direction decisions.
 
-Each question takes ${MIN_OPTIONS}-${MAX_OPTIONS} options; each needs a label (1-5 words) and a description of the choice or its trade-offs. Users answer through the automatically appended "Type something." row on every question, or press Esc to abandon the questionnaire — never author "Other" / "Type something." options yourself, since reserved labels are rejected at runtime.
+Each question takes ${MIN_OPTIONS}-${MAX_OPTIONS} options; each needs a label (1-5 words) and a description of the choice or its trade-offs. Users answer through the automatically appended "Type something." row on every question, or press Esc to abandon the questionnaire, so do not author your own "Other" option — one is dropped rather than shown twice.
 
 - multiSelect: true allows selecting multiple options; the "Type something." row is available there too — typing into it checks that row and its text comes back alongside the checked options, not instead of them.
 - To recommend an option, put it first and append "(Recommended)" to its label.
@@ -298,10 +299,14 @@ export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
 		parameters: QuestionParamsSchema,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const typed = params as unknown as QuestionParams;
+			const incoming = params as unknown as QuestionParams;
 			if (!ctx.hasUI) return rejectWithoutUi();
 
-			const validation = validateQuestionnaire(typed);
+			// Validate the caller's original input, then reconcile it with this
+			// dialog's own affordances. Order matters: the option floor and the
+			// duplicate-label check must judge what the caller actually sent, so
+			// normalization can never turn a valid call into a rejected one.
+			const validation = validateQuestionnaire(incoming);
 			if (!validation.ok) {
 				return buildToolResult(validation.message, {
 					answers: [],
@@ -309,6 +314,7 @@ export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
 					error: validation.error,
 				});
 			}
+			const typed = normalizeQuestionnaire(incoming);
 
 			// Emit event for external listeners (e.g., notification plugins)
 			emitAskUserPromptEvent(pi, typed);

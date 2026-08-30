@@ -10,10 +10,10 @@ ask_user_question({
   questions: [
     {
       question: string,            // full question text, ends with "?"
-      header: string,              // chip label, max 16 chars
+      header: string,              // chip label, truncated to 16 cols
       options: [
         {
-          label: string,           // 1-5 words, max 60 chars
+          label: string,           // 1-5 words, no length cap
           description: string,     // what the choice means / its trade-off
           preview?: string,        // markdown rendered next to the options
         },
@@ -31,21 +31,33 @@ ask_user_question({
 | Field | Constraint | Enforced by |
 | --- | --- | --- |
 | `questions` | 1-4 entries | TypeBox schema + `validateQuestionnaire` |
-| `questions[].header` | max 16 characters | TypeBox schema only |
+| `questions[].header` | none; truncated to 16 columns in the chip | render (`TabBar`, inline badge) |
 | `questions[].options` | 2-4 entries | TypeBox schema (both bounds) + `validateQuestionnaire` (minimum only) |
-| `options[].label` | max 60 characters | TypeBox schema only |
+| `options[].label` | none; wrapped or clipped to the column | render (`WrappingSelect`, `MultiSelectView`) |
 | `options[].preview` | single-select questions only | tool description (multi-select tabs render checkbox rows) |
 
-The two `maxLength` limits are checked by the parameter schema before `execute` runs;
-the runtime validator does not re-check them.
+Neither `header` nor `label` carries a `maxLength`. Over-long text is a display
+concern and degrades at render instead of failing the call, so a caller shaped
+for another harness's questionnaire tool never loses a turn to a cosmetic field.
+The label is never rewritten: it is the answer identity, echoed back verbatim by
+`formatAnswerScalar`, and truncating it would both report an answer that was
+never offered and risk collapsing two labels that differ only past the cut.
 
-### Reserved option labels
+### The "Other" alias
 
-Authoring any of `"Other"`, `"Type something."`, or `"Next"` as an option label is
-rejected with `reserved_label`. The last two are the runtime sentinel rows the dialog
-appends itself; `"Other"` is reserved because models are conditioned to reach for it.
-Reservation is unconditional — a single-select question rejects `"Next"` even though
-that row is never appended there.
+An option labelled `"Other"` is DROPPED by `normalizeQuestionnaire` before the
+dialog opens, not rejected. That label names the custom-answer row in the tool
+this one stands in for; here the row is appended automatically, so an authored
+copy is a duplicate affordance and removing it costs the user no choice.
+
+`"Type something."` and `"Next"` are the runtime sentinel labels but stay valid
+option labels: they are ordinary text elsewhere, and dropping them would delete
+a real choice. Rows are keyed by `kind` rather than by label, so an authored row
+carrying a sentinel's text stays distinct from the sentinel.
+
+Validation runs on the original input, before the drop, so the 2-option floor and
+the duplicate-label check judge exactly what the caller sent. `["Real", "Other"]`
+therefore passes and renders as one authored option beside the appended row.
 
 ## Validation errors
 
@@ -58,14 +70,12 @@ code. The `content[0].text` string is written for the model, not for a log.
 | `too_many_questions` | more than 4 questions in one call |
 | `duplicate_question` | two questions with identical text |
 | `empty_options` | a question carried fewer than 2 options |
-| `reserved_label` | an option used a reserved label |
 | `duplicate_option_label` | two options in one question share a label |
 | `no_ui` | the run has no UI (`ctx.hasUI === false`) |
 | `no_custom_ui` | the host cannot render custom UI and exposes no `select`/`input` dialogs |
 | `session_load_failed` | the dialog module failed to import (dependencies changed on disk mid-session) |
 | `stale_module_cache` | the loader cached a broken module after an earlier failed import; needs a Pi restart |
 
-`reserved_label` short-circuits before `duplicate_option_label`.
 
 ## Result
 

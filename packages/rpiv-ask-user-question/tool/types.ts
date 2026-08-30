@@ -4,8 +4,13 @@ import { LABELS_BY_KIND, ROW_INTENT_META } from "../state/row-intent.js";
 export const MAX_QUESTIONS = 4;
 export const MIN_OPTIONS = 2;
 export const MAX_OPTIONS = 4;
+/**
+ * Display width of the header chip. A longer header is truncated at render
+ * (`TabBar`, and the single-question inline badge) rather than rejected, so a
+ * caller conditioned on another harness's questionnaire tool never loses a turn
+ * to a validation error over a cosmetic field.
+ */
 export const MAX_HEADER_LENGTH = 16;
-export const MAX_LABEL_LENGTH = 60;
 
 /**
  * User-facing labels for the three runtime sentinel rows, keyed by their
@@ -20,27 +25,35 @@ export type SentinelKind = keyof typeof SENTINEL_LABELS;
 export type SentinelLabel = (typeof SENTINEL_LABELS)[SentinelKind];
 
 /**
- * Labels reserved for Pi-internal sentinels — authoring an option with any
- * of these labels triggers the `reserved_label` runtime guard. Two of the
- * three come from `ROW_INTENT_META` (the runtime kinds); `"Other"` is
- * reserved for CC parity only (the model is conditioned to reach for
- * "Other" in CC; we reject it so the runtime sentinel is the single source
- * of truth) and has no runtime kind.
+ * Labels the runtime owns. Retained as the descriptive set for the sentinel
+ * rows; it is no longer a rejection list, and normalization does NOT drop every
+ * member.
  *
- * Reserved unconditionally — every question mode rejects these labels, even
- * when a given runtime sentinel is not appended in that mode.
- *
- * Order is pinned by `types.test.ts:292` — keep the explicit
+ * Order is pinned by `types.test.ts` — keep the explicit
  * `["Other", other, next]` literal so consumers using
  * `RESERVED_LABELS[i]` indexing or `Set` membership see no behavior change.
  */
 export const RESERVED_LABELS = ["Other", ROW_INTENT_META.other.label, ROW_INTENT_META.next.label] as const;
 export type ReservedLabel = (typeof RESERVED_LABELS)[number];
 
+/**
+ * The only label normalization removes. `"Other"` is the alias callers reach for
+ * out of habit when conditioned on a questionnaire tool whose custom row carries
+ * that name; this dialog appends its own custom row instead, so an authored
+ * "Other" is a duplicate affordance and dropping it costs the user no choice.
+ *
+ * Deliberately NOT the whole of `RESERVED_LABELS`. `"Type something."` and
+ * `"Next"` are this dialog's sentinel labels but are ordinary option labels
+ * elsewhere, so dropping them would delete a real choice the caller meant to
+ * offer. They are accepted as normal options; rows are keyed by `kind`, not by
+ * label, so an authored row sharing a sentinel's text stays distinct from it.
+ */
+export const DROPPED_ALIAS_LABELS = ["Other"] as const;
+
 export const OptionSchema = Type.Object({
 	label: Type.String({
-		maxLength: MAX_LABEL_LENGTH,
-		description: `MAX ${MAX_LABEL_LENGTH} CHARACTERS — hard limit, requests over the limit are rejected. The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.`,
+		description:
+			"The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice. Long labels are wrapped or clipped to the column at render, never rejected.",
 	}),
 	description: Type.String({
 		description:
@@ -60,8 +73,7 @@ export const QuestionSchema = Type.Object({
 			'The complete question to ask the user. Should be clear, specific, and end with a question mark. Example: "Which library should we use for date formatting?" If multiSelect is true, phrase it accordingly, e.g. "Which features do you want to enable?"',
 	}),
 	header: Type.String({
-		maxLength: MAX_HEADER_LENGTH,
-		description: `MAX ${MAX_HEADER_LENGTH} CHARACTERS — hard limit, requests over the limit are rejected. Very short chip/tag shown next to the question. Examples: "Auth method", "Library", "Approach".`,
+		description: `Very short chip/tag shown next to the question, about ${MAX_HEADER_LENGTH} characters. Longer text is truncated in the chip rather than rejected. Examples: "Auth method", "Library", "Approach".`,
 	}),
 	options: Type.Array(OptionSchema, {
 		minItems: MIN_OPTIONS,
@@ -129,7 +141,6 @@ export type QuestionnaireError =
 	| "too_many_questions"
 	| "duplicate_question"
 	| "duplicate_option_label"
-	| "reserved_label"
 	| "session_load_failed"
 	| "stale_module_cache";
 

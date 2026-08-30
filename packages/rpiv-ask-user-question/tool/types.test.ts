@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
 	isQuestionnaireResult,
 	MAX_HEADER_LENGTH,
-	MAX_LABEL_LENGTH,
 	MAX_OPTIONS,
 	MAX_QUESTIONS,
 	MIN_OPTIONS,
@@ -120,23 +119,27 @@ describe("QuestionSchema — option/preview/multiSelect/header shape", () => {
 		expect(Value.Check(QuestionsSchema, [noHeader])).toBe(false);
 	});
 
-	it("rejects a header longer than MAX_HEADER_LENGTH chars", () => {
+	// No schema cap: an over-long header is truncated in the chip at render
+	// (TabBar, and the single-question inline badge) instead of failing the call.
+	it("accepts a header longer than MAX_HEADER_LENGTH chars", () => {
 		const tooLong = "x".repeat(MAX_HEADER_LENGTH + 1);
-		expect(Value.Check(QuestionsSchema, [makeQuestion({ header: tooLong })])).toBe(false);
+		expect(Value.Check(QuestionsSchema, [makeQuestion({ header: tooLong })])).toBe(true);
 	});
 
-	it("rejects a label longer than MAX_LABEL_LENGTH (60) chars", () => {
-		const tooLong = "x".repeat(MAX_LABEL_LENGTH + 1);
+	// The label is the answer identity and is echoed back verbatim, so it carries
+	// no cap at all; long text wraps or clips in the column at render.
+	it("accepts a label of any length", () => {
+		const veryLong = "x".repeat(200);
 		expect(
 			Value.Check(QuestionsSchema, [
 				makeQuestion({
 					options: [
-						{ label: tooLong, description: "a" },
+						{ label: veryLong, description: "a" },
 						{ label: "B", description: "b" },
 					],
 				}),
 			]),
-		).toBe(false);
+		).toBe(true);
 	});
 
 	it("rejects question with missing 'question' text", () => {
@@ -289,7 +292,6 @@ describe("schema constants + RESERVED_LABELS", () => {
 		expect(MIN_OPTIONS).toBe(2);
 		expect(MAX_OPTIONS).toBe(4);
 		expect(MAX_HEADER_LENGTH).toBe(16);
-		expect(MAX_LABEL_LENGTH).toBe(60);
 	});
 
 	it("RESERVED_LABELS includes the Pi sentinels + CC's 'Other'", () => {
