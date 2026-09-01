@@ -1,6 +1,6 @@
 {
 	"name": "@jetserge/rpiv-ask-user-question",
-	"version": "2.8.2",
+	"version": "2.8.3",
 	"description": "Pi extension. A structured questionnaire the model can put to you when it would otherwise guess, with typed options instead of free-form replies. Fork of @juicesharp/rpiv-ask-user-question with unreleased fixes applied.",
 	"keywords": [
 		"pi-package",
