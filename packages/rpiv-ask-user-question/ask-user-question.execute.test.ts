@@ -1,3 +1,4 @@
+import { getKeybindings } from "@earendil-works/pi-tui";
 import { createMockCtx, createMockPi, mockStdout } from "@juicesharp/rpiv-test-utils";
 import { describe, expect, it, vi } from "vitest";
 import { BEL, registerAskUserQuestionTool } from "./ask-user-question.js";
@@ -525,5 +526,201 @@ describe("ask_user_question.execute — event emission", () => {
 				},
 			],
 		});
+	});
+});
+
+/**
+ * Regression: pi's abort is cooperative and the agent loop awaits this tool's
+ * promise, so a questionnaire that only settles on `done()` wedges the whole
+ * session when Esc reaches the editor instead of the overlay. Every abort window
+ * must end the wait and write a tool result.
+ */
+describe("ask_user_question.execute — abort", () => {
+	const identityTheme = {
+		fg: (_c: string, s: string) => s,
+		bg: (_c: string, s: string) => s,
+		bold: (s: string) => s,
+		strikethrough: (s: string) => s,
+	};
+
+	function fakeHandle() {
+		return {
+			hide: vi.fn(),
+			setHidden: vi.fn(),
+			isHidden: vi.fn(() => false),
+			focus: vi.fn(),
+			unfocus: vi.fn(),
+			isFocused: vi.fn(() => true),
+		};
+	}
+
+	/** `custom` that mounts for real (factory invoked) but never settles on its own. */
+	function pendingCustom(options: { invokeFactory: boolean; handle?: ReturnType<typeof fakeHandle> }) {
+		let signalMounted: () => void = () => {};
+		const mounted = new Promise<void>((resolve) => {
+			signalMounted = resolve;
+		});
+		const custom = vi.fn((factory: unknown, opts: unknown) => {
+			return new Promise((resolve) => {
+				const { onHandle } = opts as { onHandle?: (h: unknown) => void };
+				if (options.invokeFactory) {
+					(factory as (t: unknown, th: unknown, kb: unknown, done: (v: unknown) => void) => unknown)(
+						{ requestRender: vi.fn(), terminal: { columns: 120, rows: 24 } },
+						identityTheme,
+						getKeybindings(),
+						resolve,
+					);
+				}
+				if (options.handle) onHandle?.(options.handle);
+				signalMounted();
+			});
+		}) as unknown as CustomFn;
+		return { custom, mounted };
+	}
+
+	it("returns without rendering when the signal is already aborted", async () => {
+		const tool = register();
+		const custom = vi.fn();
+		const ctx = createMockCtx({ hasUI: true, ui: { custom } as never });
+
+		const r = await tool.execute?.(
+			"tc",
+			BASE_PARAMS as never,
+			AbortSignal.abort() as never,
+			undefined as never,
+			ctx as never,
+		);
+
+		expect(custom).not.toHaveBeenCalled();
+		expect(r?.details).toMatchObject({ answers: [], cancelled: true });
+		expect(r?.content[0]).toMatchObject({ text: expect.stringContaining("interrupted the turn") });
+	});
+
+	it("settles a mounted questionnaire when the turn is aborted mid-wait", async () => {
+		const tool = register();
+		const { custom, mounted } = pendingCustom({ invokeFactory: true });
+		const ctx = createMockCtx({ hasUI: true, ui: { custom } as never });
+		const controller = new AbortController();
+
+		const pending = tool.execute?.(
+			"tc",
+			BASE_PARAMS as never,
+			controller.signal as never,
+			undefined as never,
+			ctx as never,
+		);
+
+		await mounted;
+		controller.abort();
+
+		const r = await pending;
+		expect(r?.details).toMatchObject({ answers: [], cancelled: true });
+		expect(r?.content[0]).toMatchObject({ text: expect.stringContaining("interrupted the turn") });
+	});
+
+	it("hides the overlay when the abort beats the factory (no done to call yet)", async () => {
+		const tool = register();
+		const handle = fakeHandle();
+		const { custom, mounted } = pendingCustom({ invokeFactory: false, handle });
+		const ctx = createMockCtx({ hasUI: true, ui: { custom } as never });
+		const controller = new AbortController();
+
+		const pending = tool.execute?.(
+			"tc",
+			BASE_PARAMS as never,
+			controller.signal as never,
+			undefined as never,
+			ctx as never,
+		);
+
+		await mounted;
+		controller.abort();
+
+		const r = await pending;
+		expect(handle.hide).toHaveBeenCalledTimes(1);
+		expect(r?.details).toMatchObject({ answers: [], cancelled: true });
+	});
+
+	it("clears the blocked flag on an aborted questionnaire", async () => {
+		const mockEmit = vi.fn();
+		const { pi, captured } = createMockPi({ events: { emit: mockEmit } } as never);
+		registerAskUserQuestionTool(pi);
+		const tool = captured.tools.get("ask_user_question")!;
+
+		const { custom, mounted } = pendingCustom({ invokeFactory: true });
+		const ctx = createMockCtx({ hasUI: true, ui: { custom } as never });
+		const controller = new AbortController();
+
+		const pending = tool.execute?.(
+			"tc",
+			BASE_PARAMS as never,
+			controller.signal as never,
+			undefined as never,
+			ctx as never,
+		);
+		await mounted;
+		controller.abort();
+		await pending;
+
+		const blocked = mockEmit.mock.calls.filter(([name]) => name === "rpiv:ask-user:blocked");
+		expect(blocked.at(-1)?.[1]).toMatchObject({ active: false });
+	});
+
+	it("still answers normally when a signal is present but never aborts", async () => {
+		const tool = register();
+		const ctx = ctxWithCustom({
+			cancelled: false,
+			answers: [{ questionIndex: 0, question: "Which?", kind: "option", answer: "A" }],
+		} as unknown as QuestionnaireResult);
+		const controller = new AbortController();
+
+		const r = await tool.execute?.(
+			"tc",
+			BASE_PARAMS as never,
+			controller.signal as never,
+			undefined as never,
+			ctx as never,
+		);
+
+		expect(r?.details).toMatchObject({ cancelled: false });
+		expect(r?.content[0]).toMatchObject({ text: expect.stringContaining('"Which?"="A"') });
+	});
+
+	it("ends the RPC dialog walk when the turn is aborted", async () => {
+		const tool = register();
+		let dialogShown: () => void = () => {};
+		const shown = new Promise<void>((resolve) => {
+			dialogShown = resolve;
+		});
+		// An RPC host that puts the dialog up and never answers it.
+		const ctx = createMockCtx({
+			hasUI: true,
+			mode: "rpc",
+			ui: {
+				select: vi.fn(
+					() =>
+						new Promise<string | undefined>(() => {
+							dialogShown();
+						}),
+				),
+				input: vi.fn(async () => undefined),
+			} as never,
+		} as never);
+		const controller = new AbortController();
+
+		const pending = tool.execute?.(
+			"tc",
+			BASE_PARAMS as never,
+			controller.signal as never,
+			undefined as never,
+			ctx as never,
+		);
+
+		await shown;
+		controller.abort();
+
+		const r = await pending;
+		expect(r?.details).toMatchObject({ answers: [], cancelled: true });
+		expect(r?.content[0]).toMatchObject({ text: expect.stringContaining("interrupted the turn") });
 	});
 });

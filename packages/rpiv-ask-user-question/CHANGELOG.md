@@ -7,6 +7,9 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `ask_user_question` now honours the agent's `AbortSignal`, so interrupting a turn while a questionnaire is open no longer wedges the session. The tool ignored the signal and waited on `ctx.ui.custom()`, which settles only when the overlay calls `done()`. When Esc reached the editor instead of the overlay — a collapsed overlay, or one bricked by a sibling `ui.custom()` — nothing could settle the promise, so the agent loop blocked on the tool forever: no tool result was written, the TUI stayed on "working", and further input queued undelivered until the session was killed. The wait is now raced against the signal on both the TUI and RPC paths, and the questionnaire is dismissed through `done()` (falling back to the overlay handle when the abort beats the factory).
 ## [2.8.0] - 2026-08-29
 
 ## [2.7.1] - 2026-08-24

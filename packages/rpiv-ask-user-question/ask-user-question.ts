@@ -59,12 +59,23 @@ function rejectWithoutUi() {
 	return buildToolResult(ERROR_NO_UI, { answers: [], cancelled: true, error: "no_ui" });
 }
 
-/** Sequential native-dialog walker for RPC hosts; brackets it with the blocked-event pair + terminal bell. */
-async function runRpcPath(pi: ExtensionAPI, ui: DialogUI, typed: QuestionParams) {
+/**
+ * Sequential native-dialog walker for RPC hosts; brackets it with the
+ * blocked-event pair + terminal bell.
+ *
+ * The walk is raced against the abort for the same reason the TUI path is: it
+ * awaits host dialogs that an aborted turn will never answer. Racing inside the
+ * bracket keeps the blocked-event pair balanced. Unlike the TUI path there is no
+ * handle to dismiss the host's own dialog, so a stale prompt can outlive the
+ * turn — still better than wedging the agent loop behind it forever.
+ */
+async function runRpcPath(pi: ExtensionAPI, ui: DialogUI, typed: QuestionParams, abort: Promise<typeof ABORTED>) {
 	emitAskUserBlockedEvent(pi, true);
 	try {
 		emitTerminalAttention();
-		return buildQuestionnaireResponse(await runRpcQuestionnaire(ui, typed), typed);
+		const result = await Promise.race([runRpcQuestionnaire(ui, typed), abort]);
+		if (result === ABORTED) return abortedResult();
+		return buildQuestionnaireResponse(result, typed);
 	} finally {
 		emitAskUserBlockedEvent(pi, false);
 	}
@@ -109,6 +120,58 @@ type SessionModule = typeof import("./state/questionnaire-session.js");
 
 type SessionRef = { current: import("./state/questionnaire-session.js").QuestionnaireSession | null };
 type OverlayHandleRef = { current: OverlayHandle | undefined };
+type DoneRef = { current: ((result: QuestionnaireResult) => void) | undefined };
+
+/** Race sentinel: the turn was aborted before the questionnaire produced a result. */
+const ABORTED = Symbol("ask_user_question:aborted");
+
+const ABORTED_MESSAGE =
+	"Error: the user interrupted the turn, so the questionnaire was dismissed before it could be answered. The user never saw the questions through — do NOT treat this as a decline.";
+
+/**
+ * The result handed to `done()` when an abort dismisses the questionnaire.
+ * Built fresh per call: `details` reaches the host and `answers` is mutable, so
+ * one shared instance would let a consumer edit every later abort's payload.
+ */
+function abortedQuestionnaireResult(): QuestionnaireResult {
+	return { answers: [], cancelled: true };
+}
+
+/** Tool envelope for an aborted questionnaire. */
+function abortedResult() {
+	return buildToolResult(ABORTED_MESSAGE, abortedQuestionnaireResult());
+}
+
+/**
+ * A promise that settles when `signal` aborts (immediately if it already has),
+ * and never when there is no signal.
+ *
+ * Pi's abort is cooperative: `agent.abort()` only fires the AbortController, and
+ * the agent loop `await`s this tool's promise (`executePreparedToolCall`). The
+ * questionnaire settles only when the overlay calls `done()`, so an Esc that
+ * reaches the editor instead of the overlay — a collapsed overlay, or one
+ * bricked by a sibling `ui.custom` (pi #5129, #7007) — used to leave this
+ * promise pending forever. The turn then never finalises: no tool result is
+ * written, `isStreaming` stays true, and the TUI sits in "working" with input
+ * queued but undeliverable until the session is killed.
+ */
+function watchAbort(signal: AbortSignal | undefined): {
+	promise: Promise<typeof ABORTED>;
+	dispose: () => void;
+} {
+	if (!signal) return { promise: new Promise<typeof ABORTED>(() => {}), dispose: () => {} };
+	let dispose = () => {};
+	const promise = new Promise<typeof ABORTED>((resolve) => {
+		if (signal.aborted) {
+			resolve(ABORTED);
+			return;
+		}
+		const onAbort = () => resolve(ABORTED);
+		signal.addEventListener("abort", onAbort, { once: true });
+		dispose = () => signal.removeEventListener("abort", onAbort);
+	});
+	return { promise, dispose: () => dispose() };
+}
 
 type SessionLoad =
 	| { ok: true; module: SessionModule }
@@ -191,9 +254,11 @@ function makeSessionFactory(config: {
 	collapseKey: string;
 	canReopenWhileHidden: boolean;
 	sessionRef: SessionRef;
+	doneRef: DoneRef;
+	signal: AbortSignal | undefined;
 	Session: SessionModule["QuestionnaireSession"];
 }) {
-	const { ctx, typed, itemsByTab, collapseKey, canReopenWhileHidden, sessionRef, Session } = config;
+	const { ctx, typed, itemsByTab, collapseKey, canReopenWhileHidden, sessionRef, doneRef, signal, Session } = config;
 	return (
 		tui: TUI,
 		theme: Theme,
@@ -228,6 +293,13 @@ function makeSessionFactory(config: {
 			canReopenWhileHidden,
 		});
 		sessionRef.current = session;
+		doneRef.current = done;
+		// The abort may already have fired before pi invoked this factory, during
+		// the lazy session-graph import in `execute` — by then `execute` has
+		// stopped waiting. Settle the overlay it is still mounting rather than
+		// leaving it on screen waiting for a keystroke that an aborted turn will
+		// never deliver. Deferred so pi finishes mounting first.
+		if (signal?.aborted) queueMicrotask(() => done(abortedQuestionnaireResult()));
 		return session.component;
 	};
 }
@@ -298,9 +370,10 @@ export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
 		promptGuidelines: guidance.promptGuidelines ?? DEFAULT_PROMPT_GUIDELINES,
 		parameters: QuestionParamsSchema,
 
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const incoming = params as unknown as QuestionParams;
 			if (!ctx.hasUI) return rejectWithoutUi();
+			if (signal?.aborted) return abortedResult();
 
 			// Validate the caller's original input, then reconcile it with this
 			// dialog's own affordances. Order matters: the option floor and the
@@ -325,78 +398,117 @@ export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
 			// the sequential dialog walker up front, skipping the TUI render-graph
 			// import entirely; RPC builds that predate ctx.mode are caught by the
 			// custom()-resolved-undefined backstop below. See ./rpc-fallback.ts.
-			if ((ctx as { mode?: string }).mode === "rpc" && hasDialogUI(ctx.ui)) {
-				return runRpcPath(pi, ctx.ui, typed);
-			}
-
-			const itemsByTab: WrappingSelectItem[][] = typed.questions.map((q) => buildItemsForQuestion(q));
-
-			// Lazy — QuestionnaireSession pulls the ~560ms view/TUI render graph;
-			// load it only when the tool runs, not at extension registration.
-			const sessionLoad = await loadQuestionnaireSession();
-			if (!sessionLoad.ok) {
-				return buildToolResult(sessionLoad.message, { answers: [], cancelled: true, error: sessionLoad.error });
-			}
-			const { QuestionnaireSession } = sessionLoad.module;
-			// Resolve the collapse/expand key spec from config. Default is `ctrl+]`; users
-			// with non-US layouts (e.g. Latin American, where `]` is shifted) can override
-			// via the `collapseKey` config field. `resolveCollapseKey` also accepts the
-			// sentinel value `"off"` to disable the shortcut entirely.
-			const collapseKey = resolveCollapseKey(loadConfig());
-
-			// Capture the overlay handle so the session can call `setHidden()` when the
-			// user toggles collapse, and register a raw terminal input listener for the
-			// same key so the toggle still works while the overlay is hidden (pi-tui does
-			// not route input to a hidden overlay's `component.handleInput`).
-			const sessionRef: SessionRef = { current: null };
-			const overlayHandleRef: OverlayHandleRef = { current: undefined };
-			const removeOverlayInputListener = registerCollapseKeyListener(ctx, collapseKey, sessionRef, overlayHandleRef);
-			// Hiding the overlay is only reversible through the raw listener above, so
-			// the session may emit `setHidden` only when it was actually registered;
-			// otherwise collapse falls back to the visible one-line row.
-			const canReopenWhileHidden = removeOverlayInputListener !== undefined;
-
-			emitAskUserBlockedEvent(pi, true);
+			const abortWatch = watchAbort(signal);
 			try {
-				emitTerminalAttention();
-				const result = await ctx.ui.custom<QuestionnaireResult>(
-					makeSessionFactory({
-						ctx,
-						typed,
-						itemsByTab,
-						collapseKey,
-						canReopenWhileHidden,
-						sessionRef,
-						Session: QuestionnaireSession,
-					}),
-					{
-						overlay: true,
-						overlayOptions: {
-							anchor: "bottom-center",
-							width: "100%",
-							maxHeight: "100%",
-							margin: { left: 0, right: 0, bottom: 0 },
-						},
-						onHandle: (handle) => {
-							overlayHandleRef.current = handle;
-							sessionRef.current?.setOverlayHandle(handle);
-						},
-					},
-				);
-
-				if (result === undefined) {
-					return resolveUndefinedResult(ctx, typed);
+				if ((ctx as { mode?: string }).mode === "rpc" && hasDialogUI(ctx.ui)) {
+					return await runRpcPath(pi, ctx.ui, typed, abortWatch.promise);
 				}
-
-				return buildQuestionnaireResponse(result, typed);
+				return await runTuiPath({ pi, ctx, typed, signal, abort: abortWatch.promise });
 			} finally {
-				removeOverlayInputListener?.();
-				emitAskUserBlockedEvent(pi, false);
+				abortWatch.dispose();
 			}
 		},
 	});
 
 	prewarmSessionGraph();
+}
+
+/**
+ * The TUI questionnaire: mount the overlay through `ctx.ui.custom` and wait for
+ * the user, or for the turn to be aborted out from under it.
+ */
+async function runTuiPath(args: {
+	pi: ExtensionAPI;
+	ctx: ExtensionContext;
+	typed: QuestionParams;
+	signal: AbortSignal | undefined;
+	abort: Promise<typeof ABORTED>;
+}) {
+	const { pi, ctx, typed, signal, abort } = args;
+	const itemsByTab: WrappingSelectItem[][] = typed.questions.map((q) => buildItemsForQuestion(q));
+
+	// Lazy — QuestionnaireSession pulls the ~560ms view/TUI render graph;
+	// load it only when the tool runs, not at extension registration.
+	const sessionLoad = await loadQuestionnaireSession();
+	if (!sessionLoad.ok) {
+		return buildToolResult(sessionLoad.message, { answers: [], cancelled: true, error: sessionLoad.error });
+	}
+	const { QuestionnaireSession } = sessionLoad.module;
+	// That import is the widest pre-mount window an Esc can land in.
+	if (signal?.aborted) return abortedResult();
+	// Resolve the collapse/expand key spec from config. Default is `ctrl+]`; users
+	// with non-US layouts (e.g. Latin American, where `]` is shifted) can override
+	// via the `collapseKey` config field. `resolveCollapseKey` also accepts the
+	// sentinel value `"off"` to disable the shortcut entirely.
+	const collapseKey = resolveCollapseKey(loadConfig());
+
+	// Capture the overlay handle so the session can call `setHidden()` when the
+	// user toggles collapse, and register a raw terminal input listener for the
+	// same key so the toggle still works while the overlay is hidden (pi-tui does
+	// not route input to a hidden overlay's `component.handleInput`).
+	const sessionRef: SessionRef = { current: null };
+	const overlayHandleRef: OverlayHandleRef = { current: undefined };
+	const doneRef: DoneRef = { current: undefined };
+	const removeOverlayInputListener = registerCollapseKeyListener(ctx, collapseKey, sessionRef, overlayHandleRef);
+	// Hiding the overlay is only reversible through the raw listener above, so
+	// the session may emit `setHidden` only when it was actually registered;
+	// otherwise collapse falls back to the visible one-line row.
+	const canReopenWhileHidden = removeOverlayInputListener !== undefined;
+
+	emitAskUserBlockedEvent(pi, true);
+	try {
+		emitTerminalAttention();
+		// Raced, not awaited: a bricked or unfocused overlay can never call
+		// `done()`, and the agent loop blocks on this promise, so the abort
+		// has to be able to end the wait on its own. See `watchAbort`.
+		const result = await Promise.race([
+			ctx.ui.custom<QuestionnaireResult>(
+				makeSessionFactory({
+					ctx,
+					typed,
+					itemsByTab,
+					collapseKey,
+					canReopenWhileHidden,
+					sessionRef,
+					doneRef,
+					signal,
+					Session: QuestionnaireSession,
+				}),
+				{
+					overlay: true,
+					overlayOptions: {
+						anchor: "bottom-center",
+						width: "100%",
+						maxHeight: "100%",
+						margin: { left: 0, right: 0, bottom: 0 },
+					},
+					onHandle: (handle) => {
+						overlayHandleRef.current = handle;
+						sessionRef.current?.setOverlayHandle(handle);
+					},
+				},
+			),
+			abort,
+		]);
+
+		if (result === ABORTED) {
+			// Settling through `done` is what makes pi unmount the overlay and
+			// resolve its own promise; `hide()` is the fallback for an abort
+			// that beat the factory, where there is no `done` to call yet.
+			if (doneRef.current) doneRef.current(abortedQuestionnaireResult());
+			else overlayHandleRef.current?.hide();
+			return abortedResult();
+		}
+
+		if (result === undefined) {
+			return resolveUndefinedResult(ctx, typed);
+		}
+
+		return buildQuestionnaireResponse(result, typed);
+	} finally {
+		removeOverlayInputListener?.();
+		emitAskUserBlockedEvent(pi, false);
+	}
 }
 
 export { buildQuestionnaireResponse, buildToolResult };
