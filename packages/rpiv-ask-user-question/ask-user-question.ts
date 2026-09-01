@@ -160,7 +160,7 @@ function watchAbort(signal: AbortSignal | undefined): {
 	dispose: () => void;
 } {
 	if (!signal) return { promise: new Promise<typeof ABORTED>(() => {}), dispose: () => {} };
-	let dispose = () => {};
+	let remove = () => {};
 	const promise = new Promise<typeof ABORTED>((resolve) => {
 		if (signal.aborted) {
 			resolve(ABORTED);
@@ -168,9 +168,10 @@ function watchAbort(signal: AbortSignal | undefined): {
 		}
 		const onAbort = () => resolve(ABORTED);
 		signal.addEventListener("abort", onAbort, { once: true });
-		dispose = () => signal.removeEventListener("abort", onAbort);
+		remove = () => signal.removeEventListener("abort", onAbort);
 	});
-	return { promise, dispose: () => dispose() };
+	// The executor above ran synchronously, so `remove` is already its final value.
+	return { promise, dispose: remove };
 }
 
 type SessionLoad =
@@ -352,67 +353,6 @@ export const DEFAULT_PROMPT_GUIDELINES: string[] = [
 	`Use multiSelect when several answers can be valid; typed custom text checks its own row and is returned alongside the checked options. Add an option preview (single-select only) when a mockup, snippet, diagram, or config would make a choice clearer.`,
 ];
 
-export const DEFAULT_TOOL_DESCRIPTION = `Ask the user one or more structured questions during execution — preferences, requirements, ambiguities, implementation or direction decisions.
-
-Each question takes ${MIN_OPTIONS}-${MAX_OPTIONS} options; each needs a label (1-5 words) and a description of the choice or its trade-offs. Users answer through the automatically appended "Type something." row on every question, or press Esc to abandon the questionnaire, so do not author your own "Other" option — one is dropped rather than shown twice.
-
-- multiSelect: true allows selecting multiple options; the "Type something." row is available there too — typing into it checks that row and its text comes back alongside the checked options, not instead of them.
-- To recommend an option, put it first and append "(Recommended)" to its label.
-- \`preview\` (single-select only): optional per-option markdown, rendered in a monospace box (multi-line ok), for artifacts the user must compare — ASCII mockups, code snippets, diagram variations, configs. Any option setting it switches the UI to a side-by-side layout (options left, preview right); the "Type something." row stays available there and expands to full width while typing. Skip previews when labels and descriptions suffice.`;
-
-export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
-	const guidance = validateGuidanceFields(loadConfig().guidance);
-	pi.registerTool({
-		name: ASK_USER_QUESTION_TOOL_NAME,
-		label: "Ask User Question",
-		description: guidance.description ?? DEFAULT_TOOL_DESCRIPTION,
-		promptSnippet: guidance.promptSnippet ?? DEFAULT_PROMPT_SNIPPET,
-		promptGuidelines: guidance.promptGuidelines ?? DEFAULT_PROMPT_GUIDELINES,
-		parameters: QuestionParamsSchema,
-
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			const incoming = params as unknown as QuestionParams;
-			if (!ctx.hasUI) return rejectWithoutUi();
-			if (signal?.aborted) return abortedResult();
-
-			// Validate the caller's original input, then reconcile it with this
-			// dialog's own affordances. Order matters: the option floor and the
-			// duplicate-label check must judge what the caller actually sent, so
-			// normalization can never turn a valid call into a rejected one.
-			const validation = validateQuestionnaire(incoming);
-			if (!validation.ok) {
-				return buildToolResult(validation.message, {
-					answers: [],
-					cancelled: true,
-					error: validation.error,
-				});
-			}
-			const typed = normalizeQuestionnaire(incoming);
-
-			// Emit event for external listeners (e.g., notification plugins)
-			emitAskUserPromptEvent(pi, typed);
-
-			// RPC hosts (VSCode pendant, ACP clients like Zed/Paseo — issue #78):
-			// ui.custom() cannot render there, but the select/input dialog
-			// sub-protocol works. Hosts that advertise ctx.mode (pi ≥0.79) route to
-			// the sequential dialog walker up front, skipping the TUI render-graph
-			// import entirely; RPC builds that predate ctx.mode are caught by the
-			// custom()-resolved-undefined backstop below. See ./rpc-fallback.ts.
-			const abortWatch = watchAbort(signal);
-			try {
-				if ((ctx as { mode?: string }).mode === "rpc" && hasDialogUI(ctx.ui)) {
-					return await runRpcPath(pi, ctx.ui, typed, abortWatch.promise);
-				}
-				return await runTuiPath({ pi, ctx, typed, signal, abort: abortWatch.promise });
-			} finally {
-				abortWatch.dispose();
-			}
-		},
-	});
-
-	prewarmSessionGraph();
-}
-
 /**
  * The TUI questionnaire: mount the overlay through `ctx.ui.custom` and wait for
  * the user, or for the turn to be aborted out from under it.
@@ -509,6 +449,67 @@ async function runTuiPath(args: {
 		removeOverlayInputListener?.();
 		emitAskUserBlockedEvent(pi, false);
 	}
+}
+
+export const DEFAULT_TOOL_DESCRIPTION = `Ask the user one or more structured questions during execution — preferences, requirements, ambiguities, implementation or direction decisions.
+
+Each question takes ${MIN_OPTIONS}-${MAX_OPTIONS} options; each needs a label (1-5 words) and a description of the choice or its trade-offs. Users answer through the automatically appended "Type something." row on every question, or press Esc to abandon the questionnaire, so do not author your own "Other" option — one is dropped rather than shown twice.
+
+- multiSelect: true allows selecting multiple options; the "Type something." row is available there too — typing into it checks that row and its text comes back alongside the checked options, not instead of them.
+- To recommend an option, put it first and append "(Recommended)" to its label.
+- \`preview\` (single-select only): optional per-option markdown, rendered in a monospace box (multi-line ok), for artifacts the user must compare — ASCII mockups, code snippets, diagram variations, configs. Any option setting it switches the UI to a side-by-side layout (options left, preview right); the "Type something." row stays available there and expands to full width while typing. Skip previews when labels and descriptions suffice.`;
+
+export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
+	const guidance = validateGuidanceFields(loadConfig().guidance);
+	pi.registerTool({
+		name: ASK_USER_QUESTION_TOOL_NAME,
+		label: "Ask User Question",
+		description: guidance.description ?? DEFAULT_TOOL_DESCRIPTION,
+		promptSnippet: guidance.promptSnippet ?? DEFAULT_PROMPT_SNIPPET,
+		promptGuidelines: guidance.promptGuidelines ?? DEFAULT_PROMPT_GUIDELINES,
+		parameters: QuestionParamsSchema,
+
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const incoming = params as unknown as QuestionParams;
+			if (!ctx.hasUI) return rejectWithoutUi();
+			if (signal?.aborted) return abortedResult();
+
+			// Validate the caller's original input, then reconcile it with this
+			// dialog's own affordances. Order matters: the option floor and the
+			// duplicate-label check must judge what the caller actually sent, so
+			// normalization can never turn a valid call into a rejected one.
+			const validation = validateQuestionnaire(incoming);
+			if (!validation.ok) {
+				return buildToolResult(validation.message, {
+					answers: [],
+					cancelled: true,
+					error: validation.error,
+				});
+			}
+			const typed = normalizeQuestionnaire(incoming);
+
+			// Emit event for external listeners (e.g., notification plugins)
+			emitAskUserPromptEvent(pi, typed);
+
+			// RPC hosts (VSCode pendant, ACP clients like Zed/Paseo — issue #78):
+			// ui.custom() cannot render there, but the select/input dialog
+			// sub-protocol works. Hosts that advertise ctx.mode (pi ≥0.79) route to
+			// the sequential dialog walker up front, skipping the TUI render-graph
+			// import entirely; RPC builds that predate ctx.mode are caught by
+			// `resolveUndefinedResult` inside the TUI path. See ./rpc-fallback.ts.
+			const abortWatch = watchAbort(signal);
+			try {
+				if ((ctx as { mode?: string }).mode === "rpc" && hasDialogUI(ctx.ui)) {
+					return await runRpcPath(pi, ctx.ui, typed, abortWatch.promise);
+				}
+				return await runTuiPath({ pi, ctx, typed, signal, abort: abortWatch.promise });
+			} finally {
+				abortWatch.dispose();
+			}
+		},
+	});
+
+	prewarmSessionGraph();
 }
 
 export { buildQuestionnaireResponse, buildToolResult };
