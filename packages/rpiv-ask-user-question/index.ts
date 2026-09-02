@@ -18,6 +18,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerAskUserQuestionTool } from "./ask-user-question.js";
+import { shouldDeferToMirror } from "./delegation.js";
 import { registerAskUserQuestionReconciler } from "./reconcile.js";
 import { I18N_NAMESPACE } from "./state/i18n-bridge.js";
 
@@ -47,8 +48,14 @@ export {
 	type AskUserPromptOption,
 	type AskUserPromptQuestion,
 } from "./events.js";
+// Re-exported so a mirror can read the marker off this module rather than
+// restating the string. One owner, nothing to drift.
+export { MIRROR_HOST_MARKER } from "./delegation.js";
 
 export default function (pi: ExtensionAPI) {
+	// A mirror package may own the tool name instead. See delegation.ts for why
+	// this package, and not settings, has to be the one that steps aside.
+	if (shouldDeferToMirror(pi)) return;
 	registerAskUserQuestionTool(pi);
 	registerAskUserQuestionReconciler(pi);
 }

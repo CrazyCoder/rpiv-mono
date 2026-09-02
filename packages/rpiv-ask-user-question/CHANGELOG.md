@@ -7,6 +7,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- The extension now yields the `ask_user_question` tool name to a mirror package when the user's own settings install one. Pi treats two extensions registering the same tool name as a fatal load error, and it resolves packages with project scope winning over user scope, so a user who installs a wrapper such as `@jetserge/pi-telegram-ask-mirror` cannot stop a project's `.pi/settings.json` from loading this extension as well. Only this package can break that tie, because only this package can decline the name. Detection reads the user-scope `settings.json` alone, and every missing, unreadable or unrecognised file answers "no mirror", so a user without one sees the behaviour of every previous release. A mirror borrowing this questionnaire identifies itself with the exported `MIRROR_HOST_MARKER` property and always receives the real registration.
+
 ## [2.8.3] - 2026-09-01
 
 ### Fixed

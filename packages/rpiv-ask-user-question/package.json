@@ -36,6 +36,7 @@
 		"ask-user-question.ts",
 		"rpc-fallback.ts",
 		"config.ts",
+		"delegation.ts",
 		"events.ts",
 		"index.ts",
 		"reconcile.ts",
