@@ -52,17 +52,23 @@ export const MIRROR_HOST_MARKER = "__askUserQuestionMirrorHost__";
  */
 const MIRROR_SOURCE_TOKEN = "pi-telegram-ask-mirror";
 
-/** Mirrors Pi's own `getAgentDir()`, which this package cannot import. */
+/**
+ * Resolve the agent directory the way Pi's own `getAgentDir()` does, for the
+ * `pi` distribution this package targets. A rebrand changes both the variable
+ * name and the directory, and neither is discoverable from here.
+ *
+ * Pure, and takes the home directory rather than reading it, so the tilde and
+ * default branches are testable without writing into a real home directory.
+ */
+export function agentDirFrom(configured: string | undefined, home: string): string {
+	if (configured === undefined || configured.length === 0) return join(home, ".pi", "agent");
+	if (configured === "~") return home;
+	if (configured.startsWith("~/") || configured.startsWith("~\\")) return join(home, configured.slice(2));
+	return configured;
+}
+
 function userSettingsPath(): string {
-	const configured = process.env.PI_CODING_AGENT_DIR;
-	if (configured !== undefined && configured.length > 0) {
-		const expanded =
-			configured === "~" || configured.startsWith("~/") || configured.startsWith("~\\")
-				? join(homedir(), configured.slice(1))
-				: configured;
-		return join(expanded, "settings.json");
-	}
-	return join(homedir(), ".pi", "agent", "settings.json");
+	return join(agentDirFrom(process.env.PI_CODING_AGENT_DIR, homedir()), "settings.json");
 }
 
 /**

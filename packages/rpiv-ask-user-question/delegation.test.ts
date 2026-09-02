@@ -1,11 +1,16 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { MIRROR_HOST_MARKER, shouldDeferToMirror, userInstalledMirror } from "./delegation.js";
+import {
+	agentDirFrom,
+	MIRROR_HOST_MARKER,
+	shouldDeferToMirror,
+	userInstalledMirror,
+} from "./delegation.js";
 
 const MIRROR_NPM = "npm:@jetserge/pi-telegram-ask-mirror";
-const MIRROR_DEV_PATH = "c:/projects/pi-dev/pi-telegram-ask-mirror";
+const MIRROR_DEV_PATH = "/home/dev/checkouts/pi-telegram-ask-mirror";
 
 const created: string[] = [];
 const savedAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -14,7 +19,6 @@ const savedAgentDir = process.env.PI_CODING_AGENT_DIR;
 function withSettings(contents: string | undefined): void {
 	const dir = mkdtempSync(join(tmpdir(), "rpiv-delegation-"));
 	created.push(dir);
-	mkdirSync(dir, { recursive: true });
 	if (contents !== undefined) writeFileSync(join(dir, "settings.json"), contents, "utf8");
 	process.env.PI_CODING_AGENT_DIR = dir;
 }
@@ -27,6 +31,34 @@ afterEach(() => {
 	if (savedAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = savedAgentDir;
 	for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+// Pure, so both branches Pi resolves for us are covered without touching a
+// real home directory or depending on this machine's own agent dir.
+describe("agentDirFrom", () => {
+	const HOME = join("/", "home", "someone");
+
+	it("falls back to the default agent dir when unset or empty", () => {
+		expect(agentDirFrom(undefined, HOME)).toBe(join(HOME, ".pi", "agent"));
+		expect(agentDirFrom("", HOME)).toBe(join(HOME, ".pi", "agent"));
+	});
+
+	it("expands a bare tilde to the home directory", () => {
+		expect(agentDirFrom("~", HOME)).toBe(HOME);
+	});
+
+	it("expands a leading tilde with either separator", () => {
+		expect(agentDirFrom("~/custom/agent", HOME)).toBe(join(HOME, "custom", "agent"));
+		expect(agentDirFrom("~\\custom\\agent", HOME)).toBe(join(HOME, "custom\\agent"));
+	});
+
+	it("passes an ordinary path through untouched", () => {
+		expect(agentDirFrom("/etc/pi/agent", HOME)).toBe("/etc/pi/agent");
+	});
+
+	it("does not expand a tilde that is not leading", () => {
+		expect(agentDirFrom("/opt/~/agent", HOME)).toBe("/opt/~/agent");
+	});
 });
 
 describe("userInstalledMirror", () => {
