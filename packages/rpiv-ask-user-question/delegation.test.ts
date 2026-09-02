@@ -2,12 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-	agentDirFrom,
-	MIRROR_HOST_MARKER,
-	shouldDeferToMirror,
-	userInstalledMirror,
-} from "./delegation.js";
+import { agentDirFrom, MIRROR_HOST_MARKER, shouldDeferToMirror, userInstalledMirror } from "./delegation.js";
 
 const MIRROR_NPM = "npm:@jetserge/pi-telegram-ask-mirror";
 const MIRROR_DEV_PATH = "/home/dev/checkouts/pi-telegram-ask-mirror";

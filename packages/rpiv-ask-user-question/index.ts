@@ -40,6 +40,9 @@ try {
 	// SDK absent — extension still loads with English-only UI.
 }
 
+// Re-exported so a mirror can read the marker off this module rather than
+// restating the string. One owner, nothing to drift.
+export { MIRROR_HOST_MARKER } from "./delegation.js";
 export {
 	ASK_USER_BLOCKED_EVENT,
 	ASK_USER_PROMPT_EVENT,
@@ -48,9 +51,6 @@ export {
 	type AskUserPromptOption,
 	type AskUserPromptQuestion,
 } from "./events.js";
-// Re-exported so a mirror can read the marker off this module rather than
-// restating the string. One owner, nothing to drift.
-export { MIRROR_HOST_MARKER } from "./delegation.js";
 
 export default function (pi: ExtensionAPI) {
 	// A mirror package may own the tool name instead. See delegation.ts for why
