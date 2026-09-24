@@ -7,6 +7,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `typebox` moves from `dependencies` to `peerDependencies` with a `"*"` range, as Pi's package guide requires for every host-provided module. Pi supplies `typebox` to extensions itself, and since the fix for [pi #9863](https://github.com/earendil-works/pi/issues/9863) it prints a warning at every start for an extension package that lists such a module in `dependencies`: an installed copy can bypass the loader's module mapping and create a second runtime instance. Pi already served this extension's `typebox` import from its own copy, so behaviour does not change; the warning goes away.
+
 ## [2.9.0] - 2026-09-02
 
 ### Added
